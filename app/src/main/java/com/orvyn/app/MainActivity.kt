@@ -1,13 +1,11 @@
 package com.orvyn.app
 
-import android.Manifest
+import android.app.Activity
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
-import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -35,7 +33,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -71,7 +68,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.language = Locale("hi", "IN")
-            tts?.setPitch(1.05f)
+            tts?.setPitch(1.0f)
             tts?.setSpeechRate(1.0f)
         }
     }
@@ -120,24 +117,24 @@ fun OrvynDashboard(speakOut: (String) -> Unit) {
     var d3Done by remember { mutableStateOf(false) }
     val totalXp = (if (d1Done) 25 else 0) + (if (d2Done) 30 else 0) + (if (d3Done) 20 else 0)
 
-    val speechRecognizer = remember {
-        SpeechRecognizer.createSpeechRecognizer(context)
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            triggerVoiceInput(speechRecognizer) { query ->
-                spokenQuery = query
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.get(0) ?: ""
+            if (spoken.isNotBlank()) {
+                spokenQuery = spoken
                 coreState = CoreState.THINKING
-                fetchGeminiResponse(query) { result ->
-                    aiResponse = result
+                fetchGeminiResponse(spoken) { res ->
+                    aiResponse = res
                     coreState = CoreState.RESPONDING
-                    speakOut(result)
+                    speakOut(res)
                 }
+            } else {
+                coreState = CoreState.IDLE
             }
-            coreState = CoreState.LISTENING
+        } else {
+            coreState = CoreState.IDLE
         }
     }
 
@@ -244,20 +241,18 @@ fun OrvynDashboard(speakOut: (String) -> Unit) {
             LiquidChromeCore(
                 state = coreState,
                 onClick = {
-                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                    try {
                         coreState = CoreState.LISTENING
-                        spokenQuery = "Listening... (Bolo Lucky bhai)"
-                        triggerVoiceInput(speechRecognizer) { query ->
-                            spokenQuery = query
-                            coreState = CoreState.THINKING
-                            fetchGeminiResponse(query) { result ->
-                                aiResponse = result
-                                coreState = CoreState.RESPONDING
-                                speakOut(result)
-                            }
+                        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
+                            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN", "hi-IN", "en-US"))
+                            putExtra(RecognizerIntent.EXTRA_PROMPT, "ORVYN sun raha hai, bolo bhai...")
                         }
-                    } else {
-                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        speechLauncher.launch(intent)
+                    } catch (e: Exception) {
+                        coreState = CoreState.IDLE
+                        Toast.makeText(context, "Google Voice service missing ya disabled hai", Toast.LENGTH_SHORT).show()
                     }
                 }
             )
@@ -278,35 +273,6 @@ fun OrvynDashboard(speakOut: (String) -> Unit) {
     }
 }
 
-fun triggerVoiceInput(recognizer: SpeechRecognizer, onResult: (String) -> Unit) {
-    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
-        putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN", "hi-IN", "en-US"))
-    }
-
-    recognizer.setRecognitionListener(object : RecognitionListener {
-        override fun onResults(results: Bundle?) {
-            val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-            if (!matches.isNullOrEmpty()) {
-                onResult(matches[0])
-            }
-        }
-        override fun onReadyForSpeech(params: Bundle?) {}
-        override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) {}
-        override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {}
-        override fun onError(error: Int) {
-            onResult("Voice clear capture nahi hui, dubara bolo Lucky bhai.")
-        }
-        override fun onPartialResults(partialResults: Bundle?) {}
-        override fun onEvent(eventType: Int, params: Bundle?) {}
-    })
-
-    recognizer.startListening(intent)
-}
-
 fun fetchGeminiResponse(userPrompt: String, callback: (String) -> Unit) {
     CoroutineScope(Dispatchers.IO).launch {
         try {
@@ -315,14 +281,14 @@ fun fetchGeminiResponse(userPrompt: String, callback: (String) -> Unit) {
                 .readTimeout(20, TimeUnit.SECONDS)
                 .build()
 
-            val systemInstruction = "Tu ORVYN hai - Lucky ka intelligent, supportive AI partner aur mentor. Hamesha natural Hinglish aur Hindi mein friendly, concise aur motivating reply do. Maximum 2-3 lines mein bolna taaki voice output clear rahe."
+            val systemInstruction = "Tu ORVYN hai - Lucky ka smart AI mentor aur collaborator. Hamesha simple Hinglish aur Hindi mein motivating aur seedha 2-3 lines mein jawab do."
 
             val jsonBody = JSONObject().apply {
                 put("contents", org.json.JSONArray().apply {
                     put(JSONObject().apply {
                         put("parts", org.json.JSONArray().apply {
                             put(JSONObject().apply {
-                                put("text", "$systemInstruction\n\nUser Question: $userPrompt")
+                                put("text", "$systemInstruction\n\nUser: $userPrompt")
                             })
                         })
                     })
@@ -354,12 +320,12 @@ fun fetchGeminiResponse(userPrompt: String, callback: (String) -> Unit) {
                 }
             } else {
                 withContext(Dispatchers.Main) {
-                    callback("API connection issue. Thodi der baad wapas try karo.")
+                    callback("API connection failed. Key permissions verify karo.")
                 }
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
-                callback("Network issue hai: ${e.localizedMessage}")
+                callback("Error: ${e.localizedMessage}")
             }
         }
     }
