@@ -38,11 +38,19 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlin.math.cos
 import kotlin.math.sin
+
+const val GEMINI_API_KEY = "AQ.Ab8RN6LitSVW_vuXcnJmzxNTgzmCeJoh0cvfswbBKZA2tZPoeA"
 
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
@@ -63,11 +71,13 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.language = Locale("hi", "IN")
+            tts?.setPitch(1.05f)
+            tts?.setSpeechRate(1.0f)
         }
     }
 
     private fun speakText(text: String) {
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ORVYN_TTS")
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ORVYN_VOICE")
     }
 
     override fun onDestroy() {
@@ -102,9 +112,8 @@ enum class CoreState { IDLE, LISTENING, THINKING, RESPONDING }
 fun OrvynDashboard(speakOut: (String) -> Unit) {
     val context = LocalContext.current
     var coreState by remember { mutableStateOf(CoreState.IDLE) }
-    var spokenQuery by remember { mutableStateOf("Core tap karke Hindi ya Hinglish mein bolo...") }
-    var aiResponse by remember { mutableStateOf("ORVYN Intelligence standby par hai. Commands ke liye ready.") }
-    val currentLangMode by remember { mutableStateOf("HINGLISH / HINDI") }
+    var spokenQuery by remember { mutableStateOf("Core tap karke command do...") }
+    var aiResponse by remember { mutableStateOf("ORVYN Gemini Core ready hai. Boliye!") }
 
     var d1Done by remember { mutableStateOf(false) }
     var d2Done by remember { mutableStateOf(false) }
@@ -119,17 +128,13 @@ fun OrvynDashboard(speakOut: (String) -> Unit) {
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            startSpeechListening(speechRecognizer) { text ->
-                spokenQuery = text
+            triggerVoiceInput(speechRecognizer) { query ->
+                spokenQuery = query
                 coreState = CoreState.THINKING
-                processMultiLingualQuery(text) { result ->
+                fetchGeminiResponse(query) { result ->
                     aiResponse = result
                     coreState = CoreState.RESPONDING
                     speakOut(result)
-                    CoroutineScope(Dispatchers.Main).launch {
-                        delay(5000)
-                        coreState = CoreState.IDLE
-                    }
                 }
             }
             coreState = CoreState.LISTENING
@@ -161,7 +166,7 @@ fun OrvynDashboard(speakOut: (String) -> Unit) {
                     letterSpacing = 2.sp
                 )
                 Text(
-                    text = "MODE: $currentLangMode",
+                    text = "ENGINE: GEMINI 2.5 FLASH",
                     color = Color(0xFF38BDF8),
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace,
@@ -174,7 +179,7 @@ fun OrvynDashboard(speakOut: (String) -> Unit) {
         LiquidGlassCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text(
-                    text = "USER QUERY [VOICE INPUT]:",
+                    text = "VOICE INPUT:",
                     color = Color(0xFF94A3B8),
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace
@@ -188,7 +193,7 @@ fun OrvynDashboard(speakOut: (String) -> Unit) {
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "ORVYN RESPONSE [HINDI / HINGLISH]:",
+                    text = "ORVYN INTELLIGENCE:",
                     color = Color(0xFF38BDF8),
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace
@@ -205,7 +210,7 @@ fun OrvynDashboard(speakOut: (String) -> Unit) {
         LiquidGlassCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text(
-                    text = "TAP TO COMPLETE DIRECTIVES",
+                    text = "DAILY ACTIVE DIRECTIVES",
                     color = Color(0xFF94A3B8),
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace
@@ -218,13 +223,13 @@ fun OrvynDashboard(speakOut: (String) -> Unit) {
                     onToggle = { d1Done = !d1Done }
                 )
                 InteractiveDirective(
-                    title = "2. Client Pipeline Review",
+                    title = "2. Client Pipeline Outreach",
                     xp = "+30 XP",
                     isDone = d2Done,
                     onToggle = { d2Done = !d2Done }
                 )
                 InteractiveDirective(
-                    title = "3. Video Script Breakdown",
+                    title = "3. Video Script Creation",
                     xp = "+20 XP",
                     isDone = d3Done,
                     onToggle = { d3Done = !d3Done }
@@ -241,18 +246,14 @@ fun OrvynDashboard(speakOut: (String) -> Unit) {
                 onClick = {
                     if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                         coreState = CoreState.LISTENING
-                        spokenQuery = "Listening... (Bolo bhai)"
-                        startSpeechListening(speechRecognizer) { text ->
-                            spokenQuery = text
+                        spokenQuery = "Listening... (Bolo Lucky bhai)"
+                        triggerVoiceInput(speechRecognizer) { query ->
+                            spokenQuery = query
                             coreState = CoreState.THINKING
-                            processMultiLingualQuery(text) { result ->
+                            fetchGeminiResponse(query) { result ->
                                 aiResponse = result
                                 coreState = CoreState.RESPONDING
                                 speakOut(result)
-                                CoroutineScope(Dispatchers.Main).launch {
-                                    delay(5000)
-                                    coreState = CoreState.IDLE
-                                }
                             }
                         }
                     } else {
@@ -277,12 +278,11 @@ fun OrvynDashboard(speakOut: (String) -> Unit) {
     }
 }
 
-fun startSpeechListening(recognizer: SpeechRecognizer, onResult: (String) -> Unit) {
+fun triggerVoiceInput(recognizer: SpeechRecognizer, onResult: (String) -> Unit) {
     val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
         putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN", "hi-IN", "en-US"))
-        putExtra(RecognizerIntent.EXTRA_PROMPT, "Boliye...")
     }
 
     recognizer.setRecognitionListener(object : RecognitionListener {
@@ -298,7 +298,7 @@ fun startSpeechListening(recognizer: SpeechRecognizer, onResult: (String) -> Uni
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {}
         override fun onError(error: Int) {
-            onResult("Voice clear nahi aayi, wapas bolo bhai.")
+            onResult("Voice clear capture nahi hui, dubara bolo Lucky bhai.")
         }
         override fun onPartialResults(partialResults: Bundle?) {}
         override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -307,21 +307,62 @@ fun startSpeechListening(recognizer: SpeechRecognizer, onResult: (String) -> Uni
     recognizer.startListening(intent)
 }
 
-fun processMultiLingualQuery(query: String, onComplete: (String) -> Unit) {
-    val lower = query.lowercase()
-    val reply = when {
-        lower.contains("kaise ho") || lower.contains("kya haal") ->
-            "Main ekdum badhiya hoon rockstar! Aaj ka kya mission hai?"
-        lower.contains("status") || lower.contains("direct") ->
-            "Active directives loaded hain. Winter Arc momentum full speed par hai."
-        lower.contains("video") || lower.contains("script") ->
-            "Viral hook script ready hai: 'Yeh AI trick 99% creators miss kar rahe hain!'"
-        lower.contains("website") || lower.contains("client") ->
-            "Website pipeline active hai. Aaj naye prospective clients ko pitch bhejna hai."
-        else ->
-            "Command received: '$query'. ORVYN engine analysis complete. Sabhi tasks under control hain!"
+fun fetchGeminiResponse(userPrompt: String, callback: (String) -> Unit) {
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(20, TimeUnit.SECONDS)
+                .build()
+
+            val systemInstruction = "Tu ORVYN hai - Lucky ka intelligent, supportive AI partner aur mentor. Hamesha natural Hinglish aur Hindi mein friendly, concise aur motivating reply do. Maximum 2-3 lines mein bolna taaki voice output clear rahe."
+
+            val jsonBody = JSONObject().apply {
+                put("contents", org.json.JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("parts", org.json.JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("text", "$systemInstruction\n\nUser Question: $userPrompt")
+                            })
+                        })
+                    })
+                })
+            }
+
+            val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$GEMINI_API_KEY"
+
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .build()
+
+            val response = client.newCall(request).execute()
+            val resStr = response.body?.string()
+
+            if (response.isSuccessful && resStr != null) {
+                val json = JSONObject(resStr)
+                val textResult = json.getJSONArray("candidates")
+                    .getJSONObject(0)
+                    .getJSONObject("content")
+                    .getJSONArray("parts")
+                    .getJSONObject(0)
+                    .getString("text")
+
+                withContext(Dispatchers.Main) {
+                    callback(textResult.trim())
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    callback("API connection issue. Thodi der baad wapas try karo.")
+                }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                callback("Network issue hai: ${e.localizedMessage}")
+            }
+        }
     }
-    onComplete(reply)
 }
 
 @Composable
