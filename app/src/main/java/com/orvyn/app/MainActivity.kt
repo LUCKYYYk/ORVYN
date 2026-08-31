@@ -70,7 +70,6 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("winter_arc_vault", Context.MODE_PRIVATE)
         tts = TextToSpeech(this, this)
-
         checkAndApplyMidnightReset(prefs)
 
         setContent {
@@ -87,11 +86,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
         val lastDate = p.getString("last_active_date", "")
         if (lastDate != today) {
-            val allDoneYesterday = p.getBoolean("w_h1", false) &&
-                    p.getBoolean("w_h2", false) &&
-                    p.getBoolean("w_h3", false) &&
-                    p.getBoolean("w_h4", false)
-
+            val allDone = p.getBoolean("w_h1", false) && p.getBoolean("w_h2", false) && p.getBoolean("w_h3", false) && p.getBoolean("w_h4", false)
             val currentStreak = p.getInt("streak_count", 0)
             val currentDay = p.getInt("arc_day", 1)
 
@@ -99,7 +94,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 if (lastDate.isNullOrEmpty()) {
                     putInt("streak_count", 1)
                     putInt("arc_day", 1)
-                } else if (allDoneYesterday) {
+                } else if (allDone) {
                     putInt("streak_count", currentStreak + 1)
                     putInt("arc_day", (currentDay + 1).coerceAtMost(90))
                 } else {
@@ -117,18 +112,13 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            val hindi = Locale("hi", "IN")
-            tts?.language = hindi
-
+            tts?.language = Locale("hi", "IN")
             try {
-                val voices = tts?.voices
-                val maleVoice = voices?.firstOrNull {
-                    (it.name.contains("male", ignoreCase = true) || it.name.contains("in-language", ignoreCase = true)) &&
-                            !it.name.contains("female", ignoreCase = true)
+                val maleVoice = tts?.voices?.firstOrNull {
+                    it.name.contains("male", ignoreCase = true) && !it.name.contains("female", ignoreCase = true)
                 }
                 if (maleVoice != null) tts?.voice = maleVoice
             } catch (e: Exception) { }
-
             tts?.setPitch(0.82f)
             tts?.setSpeechRate(1.05f)
 
@@ -165,11 +155,7 @@ fun OrvynTheme(content: @Composable () -> Unit) {
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(
-                        Color(0xFF070A0F),
-                        Color(0xFF04060A),
-                        Color(0xFF020305)
-                    )
+                    listOf(Color(0xFF070A0F), Color(0xFF04060A), Color(0xFF020305))
                 )
             )
     ) {
@@ -183,22 +169,20 @@ enum class CoreState { IDLE, LISTENING, THINKING, RESPONDING }
 fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Unit) {
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(0) }
-
     var coreState by remember { mutableStateOf(CoreState.IDLE) }
     var spokenQuery by remember { mutableStateOf("Core tap karke command dijiye, Sir...") }
-    var aiResponse by remember { mutableStateOf("ORVYN OS Online. Day ${prefs.getInt("arc_day", 1)} of 90 Protocol Active.") }
+    var aiResponse by remember { mutableStateOf("ORVYN OS Online. Day ${prefs.getInt("arc_day", 1)} of 90 Active.") }
 
     var h1 by remember { mutableStateOf(prefs.getBoolean("w_h1", false)) }
     var h2 by remember { mutableStateOf(prefs.getBoolean("w_h2", false)) }
     var h3 by remember { mutableStateOf(prefs.getBoolean("w_h3", false)) }
     var h4 by remember { mutableStateOf(prefs.getBoolean("w_h4", false)) }
 
-    val completedCount = (if (h1) 1 else 0) + (if (h2) 1 else 0) + (if (h3) 1 else 0) + (if (h4) 1 else 0)
-    val progressPercent = (completedCount / 4f)
+    val completed = (if (h1) 1 else 0) + (if (h2) 1 else 0) + (if (h3) 1 else 0) + (if (h4) 1 else 0)
+    val progressPercent = (completed / 4f)
     val streak = prefs.getInt("streak_count", 0)
     val arcDay = prefs.getInt("arc_day", 1)
 
-    // Robust Compose-Native Timer
     var timerRunning by remember { mutableStateOf(false) }
     var timeLeftSeconds by remember { mutableStateOf(45 * 60) }
 
@@ -211,7 +195,7 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
             if (timeLeftSeconds <= 0 && timerRunning) {
                 timerRunning = false
                 timeLeftSeconds = 45 * 60
-                speakOut("Session complete, Sir. Focus protocol logged.") {}
+                speakOut("Session complete, Sir. Discipline score logged.") {}
             }
         }
     }
@@ -237,7 +221,7 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
             override fun onEndOfSpeech() { coreState = CoreState.THINKING }
             override fun onError(error: Int) {
                 coreState = CoreState.IDLE
-                spokenQuery = "Voice capture failed, Sir. Tap core to retry."
+                spokenQuery = "Voice capture failed, Sir. Retry kijiye."
             }
             override fun onResults(results: Bundle?) {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -265,17 +249,6 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
         contract = ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) startListeningInternal() }
 
-    fun triggerPanicProtocol() {
-        coreState = CoreState.THINKING
-        spokenQuery = "RELAPSE SOS TRIGGERED"
-        val prompt = "Sir distraction feel kar rahe hain aur unka focus toot raha hai. Ek high-discipline Winter Arc general ki tarah strict, wake-up aur motivating Hinglish command do 2 lines mein."
-        fetchGeminiResponse(prompt) { speech ->
-            aiResponse = speech
-            coreState = CoreState.RESPONDING
-            speakOut(speech) { coreState = CoreState.IDLE }
-        }
-    }
-
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -286,7 +259,6 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Header Stats
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -298,43 +270,27 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
                         color = Color(0xFFF1F5F9),
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Black,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 2.sp
+                        fontFamily = FontFamily.Monospace
                     )
                     Text(
                         text = "DAY $arcDay OF 90 • STREAK: $streak 🔥",
                         color = Color(0xFF00F0FF),
                         fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.2.sp
+                        fontFamily = FontFamily.Monospace
                     )
                 }
                 WinterArcBadge(text = if (progressPercent == 1f) "UNSTOPPABLE ⚔️" else "LOCKED IN 🔒")
             }
 
-            // Tab 0: Core AI & Directives
             if (selectedTab == 0) {
-                // Progress Bar
                 GlassPanel(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(
-                                text = "DAILY COMPLETION",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "${(progressPercent * 100).toInt()}%",
-                                color = Color(0xFF00F0FF),
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Text("DAILY COMPLETION", color = Color(0xFF94A3B8), fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                            Text("${(progressPercent * 100).toInt()}%", color = Color(0xFF00F0FF), fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Box(
@@ -349,125 +305,128 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
                                     .fillMaxWidth(progressPercent)
                                     .fillMaxHeight()
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(
-                                        Brush.horizontalGradient(
-                                            listOf(Color(0xFF00F0FF), Color(0xFF38BDF8), Color(0xFF6366F1))
-                                        )
-                                    )
+                                    .background(Brush.horizontalGradient(listOf(Color(0xFF00F0FF), Color(0xFF6366F1))))
                             )
                         }
                     }
                 }
 
-                // AI Voice Output Panel
                 GlassPanel(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
+                        Text("VOICE STREAM:", color = Color(0xFF94A3B8), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                        Text(spokenQuery, color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(vertical = 2.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("ORVYN INTELLIGENCE:", color = Color(0xFF00F0FF), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                        Text(aiResponse, color = Color(0xFFE2E8F0), fontSize = 12.5.sp, modifier = Modifier.padding(top = 2.dp))
+                    }
+                }
+
+                GlassPanel(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("CORE HABIT PROTOCOL (00:00 RESET)", color = Color(0xFF94A3B8), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        HabitItem(title = "05:00 AM Wakeup & Cold Splash", isDone = h1, onToggle = { h1 = !h1; prefs.edit().putBoolean("w_h1", h1).apply() })
+                        HabitItem(title = "Hardcore Workout & Gym Routine", isDone = h2, onToggle = { h2 = !h2; prefs.edit().putBoolean("w_h2", h2).apply() })
+                        HabitItem(title = "Deep Focus: Skill & Project Building", isDone = h3, onToggle = { h3 = !h3; prefs.edit().putBoolean("w_h3", h3).apply() })
+                        HabitItem(title = "Clean Nutrition & Mindset Routine", isDone = h4, onToggle = { h4 = !h4; prefs.edit().putBoolean("w_h4", h4).apply() })
+                    }
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    LiquidChromeCore(
+                        state = coreState,
+                        onClick = {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                startListeningInternal()
+                            } else {
+                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        }
+                    )
+                    Text(
+                        text = "STATUS: [${coreState.name}] • TAP CORE TO COMMAND",
+                        color = Color(0xFF00F0FF),
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            if (selectedTab == 1) {
+                val m = timeLeftSeconds / 60
+                val s = timeLeftSeconds % 60
+                val minStr = if (m < 10) "0$m" else "$m"
+                val secStr = if (s < 10) "0$s" else "$s"
+
+                GlassPanel(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                    Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("MONK FOCUS ENGINE", color = Color(0xFF00F0FF), fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("$minStr:$secStr", color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Box(
                                 modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (coreState == CoreState.LISTENING) Color(0xFF00F0FF) else Color(0xFF64748B)
-                                    )
-                            )
-                            Text(
-                                text = "VOICE STREAM:",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
+                                    .clip(RoundedCornerShape(100.dp))
+                                    .background(if (timerRunning) Color(0xFFEF4444) else Color(0xFF00F0FF))
+                                    .clickable { timerRunning = !timerRunning }
+                                    .padding(horizontal = 20.dp, vertical = 10.dp)
+                            ) {
+                                Text(if (timerRunning) "PAUSE" else "START FOCUS", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(100.dp))
+                                    .background(Color(0xFF1E293B))
+                                    .clickable { timerRunning = false; timeLeftSeconds = 45 * 60 }
+                                    .padding(horizontal = 20.dp, vertical = 10.dp)
+                            ) {
+                                Text("RESET", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                            }
                         }
-                        Text(
-                            text = spokenQuery,
-                            color = Color.White,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(vertical = 2.dp)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "ORVYN INTELLIGENCE:",
-                            color = Color(0xFF00F0FF),
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Text(
-                            text = aiResponse,
-                            color = Color(0xFFE2E8F0),
-                            fontSize = 12.5.sp,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
                     }
                 }
+            }
 
-                // Checklist
-                GlassPanel(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "CORE HABIT PROTOCOL",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Text(
-                                text = "AUTO-RESETS AT 00:00",
-                                color = Color(0xFF475569),
-                                fontSize = 9.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        HabitItem(
-                            title = "05:00 AM Wakeup & Cold Splash",
-                            tag = "ENERGY",
-                            isDone = h1,
-                            onToggle = {
-                                h1 = !h1
-                                prefs.edit().putBoolean("w_h1", h1).apply()
-                            }
-                        )
-                        HabitItem(
-                            title = "Hardcore Workout & Gym Routine",
-                            tag = "PHYSICAL",
-                            isDone = h2,
-                            onToggle = {
-                                h2 = !h2
-                                prefs.edit().putBoolean("w_h2", h2).apply()
-                            }
-                        )
-                        HabitItem(
-                            title = "Deep Focus: Skill & Project Building",
-                            tag = "WEALTH",
-                            isDone = h3,
-                            onToggle = {
-                                h3 = !h3
-                                prefs.edit().putBoolean("w_h3", h3).apply()
-                            }
-                        )
-                        HabitItem(
-                            title = "Clean Nutrition & Mindset Routine",
-                            tag = "FOCUS",
-                            isDone = h4,
-                            onToggle = {
-                                h4 = !h4
-                                prefs.edit().putBoolean("w_h4", h4).apply()
-                            }
-                        )
+            if (selectedTab == 2) {
+                GlassPanel(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("MONK STATS VAULT", color = Color(0xFF00F0FF), fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(10.dp))
+                        StatMetricRow("Current Streak", "$streak Days Unbroken")
+                        StatMetricRow("Arc Progress", "$arcDay / 90 Days")
+                        StatMetricRow("Focus Integrity", "${(progressPercent * 100).toInt()}%")
+                        StatMetricRow("Protocol Identity", "SIR")
                     }
                 }
+            }
 
-                // AI Core & Relapse SOS
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-             
+            Spacer(modifier = Modifier.height(75.dp))
+        }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 16.dp)
+        ) {
+            LiquidAppDock(selectedIndex = selectedTab, onSelect = { selectedTab = it })
+        }
+    }
+}
+
+@Composable
+fun StatMetricRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, color = Color(0xFF94A3B8), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        Text(value, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+    }
+}
+
+fun fetchGeminiResponse(userPrompt: String, callback: (String) -> Unit) {
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val client = OkHttpClient.Builder().conne
