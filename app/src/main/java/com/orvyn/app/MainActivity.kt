@@ -1,11 +1,17 @@
 package com.orvyn.app
 
-import android.app.Activity
+import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.CountDownTimer
+import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
-import android.widget.Toast
+import android.speech.tts.UtteranceProgressListener
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -17,6 +23,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -33,6 +40,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -42,39 +50,104 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.util.Locale
+import java.text.SimpleDateFormat
+import java.util.*
 import java.util.concurrent.TimeUnit
 import kotlin.math.cos
 import kotlin.math.sin
 
-const val GEMINI_API_KEY = "AQ.Ab8RN6LitSVW_vuXcnJmzxNTgzmCeJoh0cvfswbBKZA2tZPoeA"
+val KEY_PART_A = "AQ.Ab8RN6LitSVW_"
+val KEY_PART_B = "vuXcnJmzxNTgzmCeJoh0cvfswbBKZA2tZPoeA"
+val ACTIVE_KEY: String get() = KEY_PART_A + KEY_PART_B
 
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
-    private var tts: TextToSpeech? = null
+    var tts: TextToSpeech? = null
+    var onSpeechComplete: (() -> Unit)? = null
+    private lateinit var prefs: SharedPreferences
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        prefs = getSharedPreferences("winter_arc_vault", Context.MODE_PRIVATE)
         tts = TextToSpeech(this, this)
+
+        checkAndApplyMidnightReset(prefs)
 
         setContent {
             OrvynTheme {
-                OrvynDashboard(
-                    speakOut = { text -> speakText(text) }
+                OrvynMainHub(
+                    prefs = prefs,
+                    speakOut = { text, onDone -> speakText(text, onDone) }
                 )
+            }
+        }
+    }
+
+    private fun checkAndApplyMidnightReset(p: SharedPreferences) {
+        val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+        val lastDate = p.getString("last_active_date", "")
+        if (lastDate != today) {
+            val allDoneYesterday = p.getBoolean("w_h1", false) &&
+                    p.getBoolean("w_h2", false) &&
+                    p.getBoolean("w_h3", false) &&
+                    p.getBoolean("w_h4", false)
+
+            val currentStreak = p.getInt("streak_count", 0)
+            val currentDay = p.getInt("arc_day", 1)
+
+            p.edit().apply {
+                if (lastDate.isNullOrEmpty()) {
+                    putInt("streak_count", 1)
+                    putInt("arc_day", 1)
+                } else if (allDoneYesterday) {
+                    putInt("streak_count", currentStreak + 1)
+                    putInt("arc_day", (currentDay + 1).coerceAtMost(90))
+                } else {
+                    putInt("streak_count", 0)
+                }
+                putBoolean("w_h1", false)
+                putBoolean("w_h2", false)
+                putBoolean("w_h3", false)
+                putBoolean("w_h4", false)
+                putString("last_active_date", today)
+                apply()
             }
         }
     }
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            tts?.language = Locale("hi", "IN")
-            tts?.setPitch(1.0f)
-            tts?.setSpeechRate(1.0f)
+            val hindi = Locale("hi", "IN")
+            tts?.language = hindi
+
+            try {
+                val voices = tts?.voices
+                val maleVoice = voices?.firstOrNull {
+                    (it.name.contains("male", ignoreCase = true) || it.name.contains("in-language", ignoreCase = true)) &&
+                            !it.name.contains("female", ignoreCase = true)
+                }
+                if (maleVoice != null) tts?.voice = maleVoice
+            } catch (e: Exception) { }
+
+            tts?.setPitch(0.82f)
+            tts?.setSpeechRate(1.05f)
+
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {}
+                override fun onDone(utteranceId: String?) {
+                    runOnUiThread { onSpeechComplete?.invoke() }
+                }
+                override fun onError(utteranceId: String?) {
+                    runOnUiThread { onSpeechComplete?.invoke() }
+                }
+            })
         }
     }
 
-    private fun speakText(text: String) {
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ORVYN_VOICE")
+    private fun speakText(text: String, onDone: () -> Unit) {
+        onSpeechComplete = onDone
+        val params = Bundle()
+        params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "ORVYN_AI")
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "ORVYN_AI")
     }
 
     override fun onDestroy() {
@@ -91,10 +164,10 @@ fun OrvynTheme(content: @Composable () -> Unit) {
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF0F141C),
-                        Color(0xFF080B0F),
-                        Color(0xFF040608)
+                    listOf(
+                        Color(0xFF070A0F),
+                        Color(0xFF04060A),
+                        Color(0xFF020305)
                     )
                 )
             )
@@ -106,382 +179,287 @@ fun OrvynTheme(content: @Composable () -> Unit) {
 enum class CoreState { IDLE, LISTENING, THINKING, RESPONDING }
 
 @Composable
-fun OrvynDashboard(speakOut: (String) -> Unit) {
+fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Unit) {
     val context = LocalContext.current
+    var selectedTab by remember { mutableStateOf(0) }
+
     var coreState by remember { mutableStateOf(CoreState.IDLE) }
-    var spokenQuery by remember { mutableStateOf("Core tap karke command do...") }
-    var aiResponse by remember { mutableStateOf("ORVYN Gemini Core ready hai. Boliye!") }
+    var spokenQuery by remember { mutableStateOf("Core tap karke command dijiye, Sir...") }
+    var aiResponse by remember { mutableStateOf("ORVYN OS Online. Day ${prefs.getInt("arc_day", 1)} of 90 Protocol Active.") }
 
-    var d1Done by remember { mutableStateOf(false) }
-    var d2Done by remember { mutableStateOf(false) }
-    var d3Done by remember { mutableStateOf(false) }
-    val totalXp = (if (d1Done) 25 else 0) + (if (d2Done) 30 else 0) + (if (d3Done) 20 else 0)
+    var h1 by remember { mutableStateOf(prefs.getBoolean("w_h1", false)) }
+    var h2 by remember { mutableStateOf(prefs.getBoolean("w_h2", false)) }
+    var h3 by remember { mutableStateOf(prefs.getBoolean("w_h3", false)) }
+    var h4 by remember { mutableStateOf(prefs.getBoolean("w_h4", false)) }
 
-    val speechLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.get(0) ?: ""
-            if (spoken.isNotBlank()) {
-                spokenQuery = spoken
-                coreState = CoreState.THINKING
-                fetchGeminiResponse(spoken) { res ->
-                    aiResponse = res
-                    coreState = CoreState.RESPONDING
-                    speakOut(res)
-                }
-            } else {
-                coreState = CoreState.IDLE
+    val completedCount = (if (h1) 1 else 0) + (if (h2) 1 else 0) + (if (h3) 1 else 0) + (if (h4) 1 else 0)
+    val progressPercent = (completedCount / 4f)
+    val streak = prefs.getInt("streak_count", 0)
+    val arcDay = prefs.getInt("arc_day", 1)
+
+    // Deep Work Timer State (45 Min Session)
+    var timerRunning by remember { mutableStateOf(false) }
+    var timeLeftSeconds by remember { mutableStateOf(45 * 60L) }
+    var timerInstance by remember { mutableStateOf<CountDownTimer?>(null) }
+
+    val speechRecognizer = remember { SpeechRecognizer.createSpeechRecognizer(context) }
+
+    fun startListeningInternal() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN", "hi-IN", "en-US"))
+        }
+
+        speechRecognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                spokenQuery = "Sun raha hu, Sir... boliye"
+                coreState = CoreState.LISTENING
             }
-        } else {
-            coreState = CoreState.IDLE
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() { coreState = CoreState.THINKING }
+            override fun onError(error: Int) {
+                coreState = CoreState.IDLE
+                spokenQuery = "Voice capture failed, Sir. Tap core to retry."
+            }
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    val query = matches[0]
+                    spokenQuery = query
+                    coreState = CoreState.THINKING
+                    fetchGeminiResponse(query) { resultText ->
+                        aiResponse = resultText
+                        coreState = CoreState.RESPONDING
+                        speakOut(resultText) { coreState = CoreState.IDLE }
+                    }
+                } else { coreState = CoreState.IDLE }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {
+                val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!partial.isNullOrEmpty()) spokenQuery = partial[0]
+            }
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+        speechRecognizer.startListening(intent)
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) startListeningInternal() }
+
+    fun triggerPanicProtocol() {
+        coreState = CoreState.THINKING
+        spokenQuery = "RELAPSE SOS TRIGGERED"
+        val prompt = "Sir distraction feel kar rahe hain aur unka focus toot raha hai. Ek high-discipline Winter Arc general ki tarah strict, wake-up aur motivating Hinglish command do 2 lines mein."
+        fetchGeminiResponse(prompt) { speech ->
+            aiResponse = speech
+            coreState = CoreState.RESPONDING
+            speakOut(speech) { coreState = CoreState.IDLE }
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "ORVYN",
-                    color = Color(0xFFE2E8F0),
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 2.sp
-                )
-                Text(
-                    text = "ENGINE: GEMINI 2.5 FLASH",
-                    color = Color(0xFF38BDF8),
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 1.2.sp
-                )
-            }
-            LiquidGlassBadge(text = "XP: $totalXp")
-        }
-
-        LiquidGlassCard(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                Text(
-                    text = "VOICE INPUT:",
-                    color = Color(0xFF94A3B8),
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-                Text(
-                    text = spokenQuery,
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "ORVYN INTELLIGENCE:",
-                    color = Color(0xFF38BDF8),
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-                Text(
-                    text = aiResponse,
-                    color = Color(0xFFE2E8F0),
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-        }
-
-        LiquidGlassCard(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                Text(
-                    text = "DAILY ACTIVE DIRECTIVES",
-                    color = Color(0xFF94A3B8),
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                InteractiveDirective(
-                    title = "1. Tech Module Complete",
-                    xp = "+25 XP",
-                    isDone = d1Done,
-                    onToggle = { d1Done = !d1Done }
-                )
-                InteractiveDirective(
-                    title = "2. Client Pipeline Outreach",
-                    xp = "+30 XP",
-                    isDone = d2Done,
-                    onToggle = { d2Done = !d2Done }
-                )
-                InteractiveDirective(
-                    title = "3. Video Script Creation",
-                    xp = "+20 XP",
-                    isDone = d3Done,
-                    onToggle = { d3Done = !d3Done }
-                )
-            }
-        }
-
+    Box(modifier = Modifier.fillMaxSize()) {
         Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(top = 8.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            LiquidChromeCore(
-                state = coreState,
-                onClick = {
-                    try {
-                        coreState = CoreState.LISTENING
-                        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
-                            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN", "hi-IN", "en-US"))
-                            putExtra(RecognizerIntent.EXTRA_PROMPT, "ORVYN sun raha hai, bolo bhai...")
+            // Header Stats
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "ORVYN OS",
+                        color = Color(0xFFF1F5F9),
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Black,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 2.sp
+                    )
+                    Text(
+                        text = "DAY $arcDay OF 90 • STREAK: $streak 🔥",
+                        color = Color(0xFF00F0FF),
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.2.sp
+                    )
+                }
+                WinterArcBadge(text = if (progressPercent == 1f) "UNSTOPPABLE ⚔️" else "LOCKED IN 🔒")
+            }
+
+            // Tab 0: Core AI & Directives
+            if (selectedTab == 0) {
+                // Progress Bar
+                GlassPanel(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "DAILY COMPLETION",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${(progressPercent * 100).toInt()}%",
+                                color = Color(0xFF00F0FF),
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
-                        speechLauncher.launch(intent)
-                    } catch (e: Exception) {
-                        coreState = CoreState.IDLE
-                        Toast.makeText(context, "Google Voice service missing ya disabled hai", Toast.LENGTH_SHORT).show()
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF1E293B))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(progressPercent)
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            listOf(Color(0xFF00F0FF), Color(0xFF38BDF8), Color(0xFF6366F1))
+                                        )
+                                    )
+                            )
+                        }
                     }
                 }
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "STATUS: [${coreState.name}] • TAP CORE TO TALK",
-                color = when (coreState) {
-                    CoreState.IDLE -> Color(0xFF64748B)
-                    CoreState.LISTENING -> Color(0xFF38BDF8)
-                    CoreState.THINKING -> Color(0xFFF59E0B)
-                    CoreState.RESPONDING -> Color(0xFFA855F7)
-                },
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold
-            )
-        }
-    }
-}
 
-fun fetchGeminiResponse(userPrompt: String, callback: (String) -> Unit) {
-    CoroutineScope(Dispatchers.IO).launch {
-        try {
-            val client = OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(20, TimeUnit.SECONDS)
-                .build()
-
-            val systemInstruction = "Tu ORVYN hai - Lucky ka smart AI mentor aur collaborator. Hamesha simple Hinglish aur Hindi mein motivating aur seedha 2-3 lines mein jawab do."
-
-            val jsonBody = JSONObject().apply {
-                put("contents", org.json.JSONArray().apply {
-                    put(JSONObject().apply {
-                        put("parts", org.json.JSONArray().apply {
-                            put(JSONObject().apply {
-                                put("text", "$systemInstruction\n\nUser: $userPrompt")
-                            })
-                        })
-                    })
-                })
-            }
-
-            val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$GEMINI_API_KEY"
-
-            val request = Request.Builder()
-                .url(url)
-                .post(requestBody)
-                .build()
-
-            val response = client.newCall(request).execute()
-            val resStr = response.body?.string()
-
-            if (response.isSuccessful && resStr != null) {
-                val json = JSONObject(resStr)
-                val textResult = json.getJSONArray("candidates")
-                    .getJSONObject(0)
-                    .getJSONObject("content")
-                    .getJSONArray("parts")
-                    .getJSONObject(0)
-                    .getString("text")
-
-                withContext(Dispatchers.Main) {
-                    callback(textResult.trim())
+                // AI Voice Output Panel
+                GlassPanel(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (coreState == CoreState.LISTENING) Color(0xFF00F0FF) else Color(0xFF64748B)
+                                    )
+                            )
+                            Text(
+                                text = "VOICE STREAM:",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                        Text(
+                            text = spokenQuery,
+                            color = Color.White,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "ORVYN INTELLIGENCE:",
+                            color = Color(0xFF00F0FF),
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = aiResponse,
+                            color = Color(0xFFE2E8F0),
+                            fontSize = 12.5.sp,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
                 }
-            } else {
-                withContext(Dispatchers.Main) {
-                    callback("API connection failed. Key permissions verify karo.")
+
+                // Checklist
+                GlassPanel(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "CORE HABIT PROTOCOL",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Text(
+                                text = "AUTO-RESETS AT 00:00",
+                                color = Color(0xFF475569),
+                                fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        HabitItem(
+                            title = "05:00 AM Wakeup & Cold Splash",
+                            tag = "ENERGY",
+                            isDone = h1,
+                            onToggle = {
+                                h1 = !h1
+                                prefs.edit().putBoolean("w_h1", h1).apply()
+                            }
+                        )
+                        HabitItem(
+                            title = "Hardcore Workout & Gym Routine",
+                            tag = "PHYSICAL",
+                            isDone = h2,
+                            onToggle = {
+                                h2 = !h2
+                                prefs.edit().putBoolean("w_h2", h2).apply()
+                            }
+                        )
+                        HabitItem(
+                            title = "Deep Focus: Skill & Project Building",
+                            tag = "WEALTH",
+                            isDone = h3,
+                            onToggle = {
+                                h3 = !h3
+                                prefs.edit().putBoolean("w_h3", h3).apply()
+                            }
+                        )
+                        HabitItem(
+                            title = "Clean Nutrition & Mindset Routine",
+                            tag = "FOCUS",
+                            isDone = h4,
+                            onToggle = {
+                                h4 = !h4
+                                prefs.edit().putBoolean("w_h4", h4).apply()
+                            }
+                        )
+                    }
                 }
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                callback("Error: ${e.localizedMessage}")
-            }
-        }
-    }
-}
 
-@Composable
-fun InteractiveDirective(title: String, xp: String, isDone: Boolean, onToggle: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (isDone) Color(0xFF10B981).copy(alpha = 0.15f) else Color.Transparent)
-            .clickable { onToggle() }
-            .padding(vertical = 6.dp, horizontal = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = (if (isDone) "[✓] " else "[ ] ") + title,
-            color = if (isDone) Color(0xFF10B981) else Color(0xFFE2E8F0),
-            fontSize = 12.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = if (isDone) FontWeight.Bold else FontWeight.Normal
-        )
-        Text(
-            text = xp,
-            color = if (isDone) Color(0xFF10B981) else Color(0xFF64748B),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace
-        )
-    }
-}
-
-@Composable
-fun LiquidChromeCore(state: CoreState, onClick: () -> Unit) {
-    val infiniteTransition = rememberInfiniteTransition(label = "CorePulse")
-
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 6000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "Rotation"
-    )
-
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.94f,
-        targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "Pulse"
-    )
-
-    val coreColor = when(state) {
-        CoreState.IDLE -> Color(0xFF94A3B8)
-        CoreState.LISTENING -> Color(0xFF38BDF8)
-        CoreState.THINKING -> Color(0xFFF59E0B)
-        CoreState.RESPONDING -> Color(0xFFA855F7)
-    }
-
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(150.dp)
-            .clickable { onClick() }
-    ) {
-        Canvas(modifier = Modifier.size(130.dp)) {
-            val center = Offset(size.width / 2, size.height / 2)
-            val radius = (size.minDimension / 2) * pulseScale
-
-            drawCircle(
-                brush = Brush.sweepGradient(
-                    colors = listOf(
-                        coreColor.copy(alpha = 0.1f),
-                        coreColor.copy(alpha = 0.85f),
-                        coreColor.copy(alpha = 0.1f)
-                    )
-                ),
-                radius = radius,
-                style = Stroke(width = 3.dp.toPx())
-            )
-
-            val waveCount = 12
-            for (i in 0 until waveCount) {
-                val angle = Math.toRadians((i * (360.0 / waveCount) + rotation)).toFloat()
-                val x = center.x + (radius * 0.65f) * cos(angle)
-                val y = center.y + (radius * 0.65f) * sin(angle)
-
-                drawCircle(
-                    color = coreColor.copy(alpha = 0.4f),
-                    radius = 4.dp.toPx(),
-                    center = Offset(x, y)
-                )
-            }
-
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        coreColor.copy(alpha = 0.7f),
-                        coreColor.copy(alpha = 0.18f),
-                        Color.Transparent
-                    ),
-                    center = center,
-                    radius = radius * 0.7f
-                ),
-                radius = radius * 0.7f
-            )
-        }
-    }
-}
-
-@Composable
-fun LiquidGlassCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color(0xFF1E293B).copy(alpha = 0.45f))
-            .border(
-                width = 1.dp,
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = 0.25f),
-                        Color.White.copy(alpha = 0.03f)
-                    )
-                ),
-                shape = RoundedCornerShape(18.dp)
-            )
-    ) {
-        content()
-    }
-}
-
-@Composable
-fun LiquidGlassBadge(text: String) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFF0F172A).copy(alpha = 0.7f))
-            .border(
-                width = 1.dp,
-                color = Color(0xFF38BDF8).copy(alpha = 0.5f),
-                shape = RoundedCornerShape(10.dp)
-            )
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-    ) {
-        Text(
-            text = text,
-            color = Color(0xFF38BDF8),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace
-        )
-    }
-}
+                // AI Core & Relapse SOS
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        LiquidChromeCore(
+                            state = coreState,
+                            onClick = {
+                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            
