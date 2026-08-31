@@ -51,7 +51,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.cos
 import kotlin.math.sin
@@ -185,7 +186,7 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
 
     var coreState by remember { mutableStateOf(CoreState.IDLE) }
     var spokenQuery by remember { mutableStateOf("Core tap karke command dijiye, Sir...") }
-    var aiResponse by remember { mutableStateOf("ORVYN OS Online. Day ${prefs.getInt("arc_day", 1)} of 90 Protocol Active.") }
+    var aiResponse by remember { mutableStateOf("ORVYN OS Online. Protocol ready.") }
 
     var h1 by remember { mutableStateOf(prefs.getBoolean("w_h1", false)) }
     var h2 by remember { mutableStateOf(prefs.getBoolean("w_h2", false)) }
@@ -462,4 +463,4 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
                             state = coreState,
                             onClick = {
                                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            
+                          
