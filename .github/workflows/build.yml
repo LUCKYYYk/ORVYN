@@ -13,20 +13,23 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: '17'
 
-      - name: Build with Gradle
+      - name: Setup Android Environment
         run: |
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
 
-      - name: Upload APK
+      - name: Build APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ORVYN-Debug-APK
+          name: ORVYN-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           
