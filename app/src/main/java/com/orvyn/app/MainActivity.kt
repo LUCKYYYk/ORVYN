@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.os.CountDownTimer
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -43,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -186,7 +186,7 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
 
     var coreState by remember { mutableStateOf(CoreState.IDLE) }
     var spokenQuery by remember { mutableStateOf("Core tap karke command dijiye, Sir...") }
-    var aiResponse by remember { mutableStateOf("ORVYN OS Online. Protocol ready.") }
+    var aiResponse by remember { mutableStateOf("ORVYN OS Online. Day ${prefs.getInt("arc_day", 1)} of 90 Protocol Active.") }
 
     var h1 by remember { mutableStateOf(prefs.getBoolean("w_h1", false)) }
     var h2 by remember { mutableStateOf(prefs.getBoolean("w_h2", false)) }
@@ -198,10 +198,23 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
     val streak = prefs.getInt("streak_count", 0)
     val arcDay = prefs.getInt("arc_day", 1)
 
-    // Deep Work Timer State (45 Min Session)
+    // Robust Compose-Native Timer
     var timerRunning by remember { mutableStateOf(false) }
-    var timeLeftSeconds by remember { mutableStateOf(45 * 60L) }
-    var timerInstance by remember { mutableStateOf<CountDownTimer?>(null) }
+    var timeLeftSeconds by remember { mutableStateOf(45 * 60) }
+
+    LaunchedEffect(timerRunning) {
+        if (timerRunning) {
+            while (timeLeftSeconds > 0 && timerRunning) {
+                delay(1000L)
+                timeLeftSeconds -= 1
+            }
+            if (timeLeftSeconds <= 0 && timerRunning) {
+                timerRunning = false
+                timeLeftSeconds = 45 * 60
+                speakOut("Session complete, Sir. Focus protocol logged.") {}
+            }
+        }
+    }
 
     val speechRecognizer = remember { SpeechRecognizer.createSpeechRecognizer(context) }
 
@@ -457,10 +470,4 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        LiquidChromeCore(
-                            state = coreState,
-                            onClick = {
-                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                          
+             
