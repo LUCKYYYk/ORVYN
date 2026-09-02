@@ -168,7 +168,7 @@ enum class CoreState { IDLE, LISTENING, THINKING, RESPONDING }
 @Composable
 fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Unit) {
     val context = LocalContext.current
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(0) }
     var coreState by remember { mutableStateOf(CoreState.IDLE) }
     var spokenQuery by remember { mutableStateOf("Core tap karke command dijiye, Sir...") }
     var aiResponse by remember { mutableStateOf("ORVYN OS Online. Day ${prefs.getInt("arc_day", 1)} of 90 Active.") }
@@ -184,7 +184,7 @@ fun OrvynMainHub(prefs: SharedPreferences, speakOut: (String, () -> Unit) -> Uni
     val arcDay = prefs.getInt("arc_day", 1)
 
     var timerRunning by remember { mutableStateOf(false) }
-    var timeLeftSeconds by remember { mutableStateOf(45 * 60) }
+    var timeLeftSeconds by remember { mutableIntStateOf(45 * 60) }
 
     LaunchedEffect(timerRunning) {
         if (timerRunning) {
@@ -429,4 +429,4 @@ fun StatMetricRow(label: String, value: String) {
 fun fetchGeminiResponse(userPrompt: String, callback: (String) -> Unit) {
     CoroutineScope(Dispatchers.IO).launch {
         try {
-            val client = OkHttpClient.Builder().conne
+            val client = OkHttpClient.Builder()
